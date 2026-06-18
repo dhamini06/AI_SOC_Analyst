@@ -1,0 +1,9 @@
+[
+    {
+        "alert_id": "INC-0010",
+        "alert_type": "High ICMP Activity",
+        "severity": "Medium",
+        "source_ip": "142.250.77.142",
+        "packet_count": 10
+    }
+]
