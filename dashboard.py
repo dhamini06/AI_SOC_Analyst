@@ -197,6 +197,27 @@ if st.session_state.agent:
             st.sidebar.error(f"Cannot switch mode: {e}")
 
 st.sidebar.write("---")
+st.sidebar.markdown("### 🔑 API Configuration")
+api_key_input = st.sidebar.text_input(
+    "Gemini API Key",
+    type="password",
+    value=os.getenv("GEMINI_API_KEY", ""),
+    help="Enter your Gemini API key to enable live AI analysis."
+)
+
+if api_key_input:
+    # Update environment variable and agent client dynamically
+    os.environ["GEMINI_API_KEY"] = api_key_input
+    if st.session_state.agent:
+        if not st.session_state.agent.client or st.session_state.agent.api_key != api_key_input:
+            st.session_state.agent.api_key = api_key_input
+            try:
+                from google import genai
+                st.session_state.agent.client = genai.Client(api_key=api_key_input)
+            except Exception as e:
+                st.sidebar.error(f"Error loading key: {e}")
+
+st.sidebar.write("---")
 if st.sidebar.button("🧹 Clear Alert Log"):
     clear_alerts()
 
@@ -258,7 +279,7 @@ else:
             xaxis=dict(gridcolor='#30363d'),
             yaxis=dict(gridcolor='#30363d')
         )
-        st.plotly_chart(fig_timeline, use_container_width=True)
+        st.plotly_chart(fig_timeline, width="stretch")
 
     with col_chart2:
         st.markdown("### 🎛️ Threat Severity")
@@ -278,7 +299,7 @@ else:
             font_color='#c9d1d9',
             margin=dict(l=20, r=20, t=40, b=20)
         )
-        st.plotly_chart(fig_severity, use_container_width=True)
+        st.plotly_chart(fig_severity, width="stretch")
 
     st.write("---")
 
@@ -300,7 +321,7 @@ else:
         
         st.dataframe(
             display_df.sort_values("timestamp", ascending=False),
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "alert_id": "Alert ID",
                 "timestamp": "Timestamp",
