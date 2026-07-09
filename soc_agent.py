@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from capture_engine import CaptureEngine
 from detector import Detector
+from decoy_engine import DecoyEngine
 
 # Define target JSON file path
 ALERTS_FILE = "alerts.json"
@@ -19,6 +20,13 @@ class SecurityInvestigation(BaseModel):
     risk_score: int = Field(description="Risk rating from 0 (Safe) to 100 (Critical)")
     incident_summary: str = Field(description="An overview of what occurred, explaining why this activity is suspicious")
     recommended_actions: List[str] = Field(description="Checklist of remediation and defense actions (3-5 items)")
+
+# Define Pydantic schema for attacker profiling
+class AttackerProfile(BaseModel):
+    threat_level: str = Field(description="Low, Medium, High, or Critical threat assessment")
+    attacker_skill_level: str = Field(description="Novice, Intermediate, or Advanced")
+    tactics_observed: List[str] = Field(description="List of MITRE ATT&CK tactics (e.g. Discovery, Execution, Exfiltration)")
+    intent_summary: str = Field(description="A brief description of what the attacker is searching for and trying to achieve.")
 
 class SOCAgent:
     def __init__(self, interface: str = "eth0"):
@@ -39,15 +47,128 @@ class SOCAgent:
         # Initialize detector and capture engine
         self.detector = Detector(alert_callback=self.handle_alert)
         self.capture_engine = CaptureEngine(interface=self.interface, callback=self.detector.process_packet)
+        
+        # Initialize Decoy Engine
+        self.decoy_engine = DecoyEngine(agent_callback=self.handle_decoy_input)
         self.lock = threading.Lock()
 
     def start(self):
-        """Starts the capture engine."""
+        """Starts the capture engine and decoy engine."""
         self.capture_engine.start()
+        self.decoy_engine.start()
 
     def stop(self):
-        """Stops the capture engine."""
+        """Stops the capture engine and decoy engine."""
         self.capture_engine.stop()
+        self.decoy_engine.stop()
+
+    def handle_decoy_input(self, cmd: str, session_id: str, is_web: bool = False) -> str:
+        """
+        Receives input from a decoy listener (hacker commands) and returns a simulated response via Gemini.
+        Also runs a background task to analyze the attacker's intent and update the session profile.
+        """
+        logs = self.decoy_engine.load_logs()
+        session = logs["active_sessions"].get(session_id, {})
+        history = session.get("command_history", [])
+        
+        # Format history context
+        history_str = ""
+        for entry in history[-6:]:
+            history_str += f"{'Attacker' if entry['sender'] == 'attacker' else 'System'}: {entry['text']}\n"
+            
+        if is_web:
+            system_prompt = """
+You are a vulnerable web admin panel backend. A malicious actor is sending payloads (e.g., SQL Injection, directory traversal) to exploit it.
+Generate raw administrative responses or database error messages that fit their exploit query.
+For example, if they do SQL injection for login bypass, return: "Login successful. Redirecting to admin_dashboard.php..."
+If they query database versions, return a realistic SQL table header and rows with mock data.
+Keep your response short, realistic, and do not explain yourself.
+"""
+            prompt = f"Web Attack History:\n{history_str}\nNew Attack Input: {cmd}\nResponse:"
+        else:
+            system_prompt = """
+You are a decoy Ubuntu 22.04 LTS honeypot shell. You must act strictly as a real Linux terminal shell.
+Do not break character under any circumstances. Print only the stdout/stderr of the shell command. Do not add any conversational text.
+Maintain a fake directory structure in /root.
+Include a fake decoy file 'database_backup_july.sql' containing simulated user emails/hashes, and a file 'aws_credentials.txt' with fake API keys to keep them interested.
+If they download or execute commands, pretend they succeed but print standard error logs or warnings where appropriate.
+If they do 'ls', print the contents. If they query 'whoami', print 'root'.
+"""
+            prompt = f"Shell Command History:\n{history_str}\nIntruder Shell Command: {cmd}\nResponse:"
+
+        if self.client:
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0.4
+                    )
+                )
+                output = response.text.strip()
+                
+                # Launch background analysis profiling in parallel
+                threading.Thread(
+                    target=self.analyze_deception_session, 
+                    args=(session_id,), 
+                    daemon=True
+                ).start()
+                
+                return output
+            except Exception as e:
+                print(f"[SOC Agent] Decoy Gemini Emulation failed: {e}. Using offline shell response.")
+                
+        return self.decoy_engine._get_offline_shell_response(cmd)
+
+    def analyze_deception_session(self, session_id: str):
+        """
+        Analyzes the full command history of a deception session using Gemini to classify intent.
+        Updates the session's profile in deception_logs.json.
+        """
+        logs = self.decoy_engine.load_logs()
+        session = logs["active_sessions"].get(session_id)
+        if not session or not session.get("command_history"):
+            return
+            
+        history = session["command_history"]
+        history_text = "\n".join([f"{h['sender']}: {h['text']}" for h in history])
+        
+        prompt = f"""
+You are an expert Threat Intelligence Analyst.
+Analyze the following command history of an intruder trapped inside our decoy honeypot environment:
+
+Session ID: {session_id}
+Decoy Type: {session['decoy_type']}
+Attacker IP: {session['attacker_ip']}
+
+Commands Run:
+{history_text}
+
+Perform a forensic analysis of this interactive session. Classify their threat level, estimate their skill level, note which MITRE ATT&CK tactics they are employing (e.g. Reconnaissance, Initial Access, Discovery, Lateral Movement, Collection, Exfiltration, Execution), and summarize their intent.
+"""
+        if self.client:
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=AttackerProfile,
+                        temperature=0.2
+                    )
+                )
+                
+                analysis_dict = json.loads(response.text)
+                self.decoy_engine.update_session_profile(session_id, {
+                    "threat_level": analysis_dict.get("threat_level", "Medium"),
+                    "attacker_skill_level": analysis_dict.get("attacker_skill_level", "Intermediate"),
+                    "tactics_observed": analysis_dict.get("tactics_observed", []),
+                    "intent_summary": analysis_dict.get("intent_summary", "Intruder active.")
+                })
+            except Exception as e:
+                print(f"[SOC Agent] Attacker profile analysis failed: {e}")
+
 
     def handle_alert(self, alert: Dict):
         """

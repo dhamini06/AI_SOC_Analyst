@@ -75,9 +75,26 @@ st.markdown("""
         margin-right: 5px;
         box-shadow: 0 0 8px #00ff66;
     }
-    .status-dot.inactive {
-        background-color: #ff3333;
-        box-shadow: 0 0 8px #ff3333;
+    /* Terminal Console */
+    .terminal-console {
+        background-color: #0b0e14;
+        color: #00ff66;
+        font-family: 'Courier New', Courier, monospace;
+        padding: 15px;
+        border-radius: 6px;
+        border: 1px solid #30363d;
+        max-height: 400px;
+        overflow-y: auto;
+        line-height: 1.4;
+    }
+    .terminal-cmd {
+        color: #ffffff;
+        font-weight: bold;
+    }
+    .terminal-resp {
+        color: #a9ffb7;
+        white-space: pre-wrap;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -179,6 +196,28 @@ if st.sidebar.button("📡 Simulate DNS Data Tunneling"):
         st.sidebar.error("SOC Agent is not running.")
 
 st.sidebar.write("---")
+st.sidebar.markdown("### 🎭 Deception Simulator")
+st.sidebar.info("Trigger simulated sessions targeting our Decoy Traps (Ports 2222/8080) to test Gemini terminal responses and profilers.")
+
+if st.sidebar.button("🔓 Simulate SSH Sandbox Login"):
+    if st.session_state.agent:
+        st.session_state.agent.decoy_engine.trigger_simulated_attacker("ssh_intrusion")
+        st.sidebar.success("SSH Sandbox intrusion sequence started!")
+        time.sleep(1.0)
+        st.rerun()
+    else:
+        st.sidebar.error("SOC Agent is not running.")
+
+if st.sidebar.button("🕸️ Simulate Web SQL Injection"):
+    if st.session_state.agent:
+        st.session_state.agent.decoy_engine.trigger_simulated_attacker("web_exploit")
+        st.sidebar.success("Web SQL Injection sequence started!")
+        time.sleep(1.0)
+        st.rerun()
+    else:
+        st.sidebar.error("SOC Agent is not running.")
+
+st.sidebar.write("---")
 
 # Live/Simulation Settings
 st.sidebar.markdown("### 🛠️ Configuration")
@@ -222,187 +261,313 @@ if st.sidebar.button("🧹 Clear Alert Log"):
     clear_alerts()
 
 # Main dashboard layout
-alerts = load_alerts()
+tab_soc, tab_deception = st.tabs(["🚨 SOC Monitoring & Alerting", "🎭 Cyber Deception Control Room"])
 
-if not alerts:
-    st.warning("No security alerts generated yet. Trigger one of the simulated threats on the sidebar to get started!")
-else:
-    # Convert alerts to DataFrame for analysis
-    df = pd.DataFrame(alerts)
+with tab_soc:
+    alerts = load_alerts()
     
-    # Enrich and parse severity/risk metrics
-    def extract_risk_score(row):
-        if "ai_analysis" in row and isinstance(row["ai_analysis"], dict):
-            return row["ai_analysis"].get("risk_score", 50)
-        return 50
-    df["risk_score"] = df.apply(extract_risk_score, axis=1)
-
-    # Top Row Metrics
-    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-    with m_col1:
-        st.metric("Total Alerts Triggered", len(df))
-    with m_col2:
-        high_risk_alerts = len(df[df["risk_score"] >= 70])
-        st.metric("High/Critical Incidents", high_risk_alerts, delta_color="inverse")
-    with m_col3:
-        avg_risk = int(df["risk_score"].mean())
-        st.metric("Average Risk Score", f"{avg_risk}/100")
-    with m_col4:
-        top_attacker = df["source_ip"].value_counts().index[0]
-        st.metric("Top Source IP", top_attacker)
-
-    st.write("")
-
-    # Visualizations Row
-    col_chart1, col_chart2 = st.columns([2, 1])
+    if not alerts:
+        st.warning("No security alerts generated yet. Trigger one of the simulated threats on the sidebar to get started!")
+    else:
+        # Convert alerts to DataFrame for analysis
+        df = pd.DataFrame(alerts)
+        
+        # Enrich and parse severity/risk metrics
+        def extract_risk_score(row):
+            if "ai_analysis" in row and isinstance(row["ai_analysis"], dict):
+                return row["ai_analysis"].get("risk_score", 50)
+            return 50
+        df["risk_score"] = df.apply(extract_risk_score, axis=1)
     
-    with col_chart1:
-        st.markdown("### 📈 Threat Timeline")
-        # Plot alerts over time
-        df["time_parsed"] = pd.to_datetime(df["timestamp"])
-        df_time = df.groupby(["time_parsed", "alert_type"]).size().reset_index(name="count")
+        # Top Row Metrics
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            st.metric("Total Alerts Triggered", len(df))
+        with m_col2:
+            high_risk_alerts = len(df[df["risk_score"] >= 70])
+            st.metric("High/Critical Incidents", high_risk_alerts, delta_color="inverse")
+        with m_col3:
+            avg_risk = int(df["risk_score"].mean())
+            st.metric("Average Risk Score", f"{avg_risk}/100")
+        with m_col4:
+            top_attacker = df["source_ip"].value_counts().index[0]
+            st.metric("Top Source IP", top_attacker)
+    
+        st.write("")
+    
+        # Visualizations Row
+        col_chart1, col_chart2 = st.columns([2, 1])
         
-        fig_timeline = px.bar(
-            df_time, 
-            x="time_parsed", 
-            y="count", 
-            color="alert_type",
-            title="Alert Volume over Time",
-            color_discrete_sequence=px.colors.qualitative.Bold,
-            height=300
-        )
-        fig_timeline.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#c9d1d9',
-            margin=dict(l=20, r=20, t=40, b=20),
-            xaxis=dict(gridcolor='#30363d'),
-            yaxis=dict(gridcolor='#30363d')
-        )
-        st.plotly_chart(fig_timeline, width="stretch")
-
-    with col_chart2:
-        st.markdown("### 🎛️ Threat Severity")
-        # Pie chart for severity levels
-        fig_severity = px.pie(
-            df, 
-            names="severity", 
-            hole=0.4,
-            title="Severity Distribution",
-            color="severity",
-            color_discrete_map={"High": "#ff6600", "Critical": "#ff3333", "Medium": "#ffcc00", "Low": "#00ccff"},
-            height=300
-        )
-        fig_severity.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#c9d1d9',
-            margin=dict(l=20, r=20, t=40, b=20)
-        )
-        st.plotly_chart(fig_severity, width="stretch")
-
-    st.write("---")
-
-    # Alert Table and Investigation Panel
-    col_table, col_details = st.columns([3, 2])
-
-    with col_table:
-        st.markdown("### 🚨 Threat Alert Log")
-        
-        # Display simplified table view for selection
-        display_df = df[["alert_id", "timestamp", "alert_type", "severity", "source_ip", "risk_score"]].copy()
-        
-        # Format display elements
-        selected_alert_id = st.selectbox(
-            "Select an Incident to Investigate:",
-            options=display_df["alert_id"].tolist(),
-            index=len(display_df) - 1  # default to latest alert
-        )
-        
-        st.dataframe(
-            display_df.sort_values("timestamp", ascending=False),
-            width="stretch",
-            column_config={
-                "alert_id": "Alert ID",
-                "timestamp": "Timestamp",
-                "alert_type": "Classification",
-                "severity": "Severity",
-                "source_ip": "Source IP",
-                "risk_score": "Risk Level (AI)"
-            },
-            hide_index=True
-        )
-
-    with col_details:
-        # Load the selected alert details
-        selected_alert = next((a for a in alerts if a["alert_id"] == selected_alert_id), None)
-        
-        if selected_alert:
-            st.markdown(f"### 🛡️ Incident Report: {selected_alert_id}")
+        with col_chart1:
+            st.markdown("### 📈 Threat Timeline")
+            # Plot alerts over time
+            df["time_parsed"] = pd.to_datetime(df["timestamp"])
+            df_time = df.groupby(["time_parsed", "alert_type"]).size().reset_index(name="count")
             
-            # Severity Indicator
-            sev = selected_alert["severity"]
-            sev_badge = f'<span class="severity-badge sev-{sev.lower()}">{sev}</span>'
+            fig_timeline = px.bar(
+                df_time, 
+                x="time_parsed", 
+                y="count", 
+                color="alert_type",
+                title="Alert Volume over Time",
+                color_discrete_sequence=px.colors.qualitative.Bold,
+                height=300
+            )
+            fig_timeline.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font_color='#c9d1d9',
+                margin=dict(l=20, r=20, t=40, b=20),
+                xaxis=dict(gridcolor='#30363d'),
+                yaxis=dict(gridcolor='#30363d')
+            )
+            st.plotly_chart(fig_timeline, width="stretch")
+    
+        with col_chart2:
+            st.markdown("### 🎛️ Threat Severity")
+            # Pie chart for severity levels
+            fig_severity = px.pie(
+                df, 
+                names="severity", 
+                hole=0.4,
+                title="Severity Distribution",
+                color="severity",
+                color_discrete_map={"High": "#ff6600", "Critical": "#ff3333", "Medium": "#ffcc00", "Low": "#00ccff"},
+                height=300
+            )
+            fig_severity.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font_color='#c9d1d9',
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_severity, width="stretch")
+    
+        st.write("---")
+    
+        # Alert Table and Investigation Panel
+        col_table, col_details = st.columns([3, 2])
+    
+        with col_table:
+            st.markdown("### 🚨 Threat Alert Log")
             
-            st.markdown(f"""
-            <div class="soc-card">
-                <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <strong>Classification:</strong> {selected_alert['alert_type']}
-                    {sev_badge}
-                </div>
-                <div style='margin-top: 10px;'>
-                    <strong>Source Host:</strong> <code>{selected_alert['source_ip']}</code>
-                </div>
-                <div>
-                    <strong>Total Packets:</strong> {selected_alert['packet_count']}
-                </div>
-                <div style='margin-top: 10px; font-size: 0.9rem; color: #8b949e; background: #21262d; padding: 10px; border-radius: 4px; border: 1px solid #30363d;'>
-                    <strong>Raw Detection Signature:</strong><br>{selected_alert['details']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # Display simplified table view for selection
+            display_df = df[["alert_id", "timestamp", "alert_type", "severity", "source_ip", "risk_score"]].copy()
             
-            # Display AI Analyst Investigation
-            ai_analysis = selected_alert.get("ai_analysis")
-            if ai_analysis:
-                st.markdown("#### 🤖 Google Gemini AI SOC Analyst Investigation")
+            # Format display elements
+            selected_alert_id = st.selectbox(
+                "Select an Incident to Investigate:",
+                options=display_df["alert_id"].tolist(),
+                index=len(display_df) - 1  # default to latest alert
+            )
+            
+            st.dataframe(
+                display_df.sort_values("timestamp", ascending=False),
+                width="stretch",
+                column_config={
+                    "alert_id": "Alert ID",
+                    "timestamp": "Timestamp",
+                    "alert_type": "Classification",
+                    "severity": "Severity",
+                    "source_ip": "Source IP",
+                    "risk_score": "Risk Level (AI)"
+                },
+                hide_index=True
+            )
+    
+        with col_details:
+            # Load the selected alert details
+            selected_alert = next((a for a in alerts if a["alert_id"] == selected_alert_id), None)
+            
+            if selected_alert:
+                st.markdown(f"### 🛡️ Incident Report: {selected_alert_id}")
                 
-                risk = ai_analysis.get("risk_score", 50)
-                # Determine progress bar color based on risk score
-                if risk >= 75:
-                    progress_color = "red"
-                elif risk >= 40:
-                    progress_color = "orange"
-                else:
-                    progress_color = "green"
+                # Severity Indicator
+                sev = selected_alert["severity"]
+                sev_badge = f'<span class="severity-badge sev-{sev.lower()}">{sev}</span>'
                 
                 st.markdown(f"""
-                <div class="soc-card" style='border-left: 4px solid {progress_color};'>
-                    <div style='font-size:0.8rem; color:#8b949e; margin-bottom: 5px;'>AI RISK ASSESSMENT</div>
-                    <div style='display:flex; align-items:center; margin-bottom: 15px;'>
-                        <span style='font-size: 2.2rem; font-weight:bold; color:{progress_color}; margin-right: 15px;'>{risk}</span>
-                        <div style='width: 100%;'>
-                            <div style='background-color:#30363d; border-radius:5px; height: 10px; width:100%;'>
-                                <div style='background-color:{progress_color}; border-radius:5px; height: 10px; width:{risk}%;'></div>
-                            </div>
-                        </div>
+                <div class="soc-card">
+                    <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <strong>Classification:</strong> {selected_alert['alert_type']}
+                        {sev_badge}
                     </div>
-                    <strong>Incident Summary:</strong>
-                    <p style='color:#c9d1d9; font-size:0.95rem;'>{ai_analysis.get('incident_summary')}</p>
-                    
-                    <strong style='margin-top:15px; display:block;'>Threat Level:</strong> 
-                    <span style='color:{progress_color}; font-weight:bold;'>{ai_analysis.get('threat_classification')}</span>
+                    <div style='margin-top: 10px;'>
+                        <strong>Source Host:</strong> <code>{selected_alert['source_ip']}</code>
+                    </div>
+                    <div>
+                        <strong>Total Packets:</strong> {selected_alert['packet_count']}
+                    </div>
+                    <div style='margin-top: 10px; font-size: 0.9rem; color: #8b949e; background: #21262d; padding: 10px; border-radius: 4px; border: 1px solid #30363d;'>
+                        <strong>Raw Detection Signature:</strong><br>{selected_alert['details']}
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.markdown("#### 📝 Recommended SOC Analyst Response Checklist")
-                actions = ai_analysis.get("recommended_actions", [])
-                for i, action in enumerate(actions, 1):
-                    st.checkbox(f"{action}", key=f"action_{selected_alert_id}_{i}")
-            else:
-                st.warning("No AI investigation report found for this alert.")
+                # Display AI Analyst Investigation
+                ai_analysis = selected_alert.get("ai_analysis")
+                if ai_analysis:
+                    st.markdown("#### 🤖 Google Gemini AI SOC Analyst Investigation")
+                    
+                    risk = ai_analysis.get("risk_score", 50)
+                    # Determine progress bar color based on risk score
+                    if risk >= 75:
+                        progress_color = "red"
+                    elif risk >= 40:
+                        progress_color = "orange"
+                    else:
+                        progress_color = "green"
+                    
+                    st.markdown(f"""
+                    <div class="soc-card" style='border-left: 4px solid {progress_color};'>
+                        <div style='font-size:0.8rem; color:#8b949e; margin-bottom: 5px;'>AI RISK ASSESSMENT</div>
+                        <div style='display:flex; align-items:center; margin-bottom: 15px;'>
+                            <span style='font-size: 2.2rem; font-weight:bold; color:{progress_color}; margin-right: 15px;'>{risk}</span>
+                            <div style='width: 100%;'>
+                                <div style='background-color:#30363d; border-radius:5px; height: 10px; width:100%;'>
+                                    <div style='background-color:{progress_color}; border-radius:5px; height: 10px; width:{risk}%;'></div>
+                                </div>
+                            </div>
+                        </div>
+                        <strong>Incident Summary:</strong>
+                        <p style='color:#c9d1d9; font-size:0.95rem;'>{ai_analysis.get('incident_summary')}</p>
+                        
+                        <strong style='margin-top:15px; display:block;'>Threat Level:</strong> 
+                        <span style='color:{progress_color}; font-weight:bold;'>{ai_analysis.get('threat_classification')}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("#### 📝 Recommended SOC Analyst Response Checklist")
+                    actions = ai_analysis.get("recommended_actions", [])
+                    for i, action in enumerate(actions, 1):
+                        st.checkbox(f"{action}", key=f"action_{selected_alert_id}_{i}")
+                else:
+                    st.warning("No AI investigation report found for this alert.")
 
-# Add manual refresh
-st.write("")
-if st.button("🔄 Refresh Dashboard Feed"):
-    st.rerun()
+    # Add manual refresh
+    st.write("")
+    if st.button("🔄 Refresh Dashboard Feed", key="btn_refresh_soc"):
+        st.rerun()
+
+with tab_deception:
+    st.markdown("<h2>🎭 Cyber Deception Control Room</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#8b949e;'>Manage deployed honeypot decoys (Ports 2222 and 8080) and monitor live attacker interactions. Keystrokes are captured, logged, and profiled by Gemini AI in real time.</p>", unsafe_allow_html=True)
+    
+    # Check decoy status
+    if st.session_state.agent:
+        decoy_status = "🟢 Active & Listening" if st.session_state.agent.decoy_engine.running else "🔴 Inactive"
+        deception_logs = st.session_state.agent.decoy_engine.load_logs()
+    else:
+        decoy_status = "🔴 Deception Engine Offline"
+        deception_logs = {"active_sessions": {}, "past_sessions": []}
+        
+    # Deception Metrics Row
+    d_col1, d_col2, d_col3 = st.columns(3)
+    with d_col1:
+        st.metric("Decoy Listeners", decoy_status, help="Honeypots bound to Port 2222 (SSH) and 8080 (Web Admin)")
+    with d_col2:
+        st.metric("Active Sessions Trapped", len(deception_logs.get("active_sessions", {})))
+    with d_col3:
+        st.metric("Total Intruders Captured", len(deception_logs.get("past_sessions", [])) + len(deception_logs.get("active_sessions", {})))
+        
+    st.write("")
+    
+    # Split into session list and details
+    col_sess_list, col_sess_details = st.columns([1, 2])
+    
+    # Populate session lists
+    active_sess = deception_logs.get("active_sessions", {})
+    past_sess = deception_logs.get("past_sessions", [])
+    
+    sess_options = []
+    # Add active sessions
+    for sid, sdata in active_sess.items():
+        sess_options.append(f"🔴 {sid} ({sdata['decoy_type']}) - LIVE")
+    # Add past sessions
+    for sdata in reversed(past_sess):
+        sess_options.append(f"⚪ {sdata['session_id']} ({sdata['decoy_type']}) - CLOSED")
+        
+    with col_sess_list:
+        st.markdown("### 🗂️ Trapped Sessions")
+        if not sess_options:
+            st.info("No attacker sessions recorded yet. Bind the honeypot ports or use the sidebar controls to simulate a session!")
+            selected_sess_label = None
+        else:
+            selected_sess_label = st.radio("Select Session to Inspect:", options=sess_options, key="radio_deception_sessions")
+            
+    with col_sess_details:
+        st.markdown("### 🖥️ Live Deception Monitor & Forensic Analysis")
+        if selected_sess_label:
+            # Parse selected session ID
+            selected_sid = selected_sess_label.split(" ")[1]
+            
+            # Find session data
+            session_data = None
+            is_active = "LIVE" in selected_sess_label
+            if is_active:
+                session_data = active_sess.get(selected_sid)
+            else:
+                session_data = next((s for s in past_sess if s["session_id"] == selected_sid), None)
+                
+            if session_data:
+                st.markdown(f"#### Session Log: `{selected_sid}`")
+                
+                # Render AI Profiler
+                ai_profile = session_data.get("ai_profile", {})
+                t_level = ai_profile.get("threat_level", "Medium")
+                t_color = {"Low": "#00ff66", "Medium": "#ffcc00", "High": "#ff6600", "Critical": "#ff3333"}.get(t_level, "#ffcc00")
+                
+                # Format observed tactics badges
+                tactics_html = ""
+                for tac in ai_profile.get("tactics_observed", []):
+                    tactics_html += f'<span class="severity-badge" style="background-color:#30363d; border:1px solid #58a6ff; color:#58a6ff; margin-right:5px; font-size:0.75rem; padding: 2px 6px;">{tac}</span>'
+                if not tactics_html:
+                    tactics_html = '<span style="color:#8b949e; font-style:italic;">No tactics cataloged yet</span>'
+                
+                st.markdown(f"""
+                <div class="soc-card" style='border-left: 4px solid {t_color};'>
+                    <div style='font-size:0.8rem; color:#8b949e; margin-bottom: 5px;'>🤖 AI FORENSIC ASSISTANCE PROFILE</div>
+                    <div style='margin-bottom: 8px;'>
+                        <strong>Threat Classification:</strong> <span class="severity-badge" style="background-color:{t_color}; color:{'black' if t_level=='Medium' else 'white'};">{t_level}</span>
+                    </div>
+                    <div style='margin-bottom: 8px;'>
+                        <strong>Hacker Skill Level:</strong> <span class="severity-badge" style="background-color:#21262d; border:1px solid #30363d; color:#c9d1d9;">{ai_profile.get('attacker_skill_level', 'Evaluating...')}</span>
+                    </div>
+                    <div style='margin-bottom: 12px;'>
+                        <strong>MITRE ATT&CK Tactics Observed:</strong><br>
+                        <div style='margin-top:5px;'>{tactics_html}</div>
+                    </div>
+                    <strong>Intent Summary & Next Steps:</strong>
+                    <p style='color:#c9d1d9; font-size:0.9rem; margin-top:5px;'>{ai_profile.get('intent_summary')}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Render Terminal Console Log
+                st.markdown("#### 📺 Live Keystroke Stream")
+                history = session_data.get("command_history", [])
+                
+                if not history:
+                    st.info("Attacker establishing shell environment...")
+                else:
+                    terminal_html = '<div class="terminal-console">'
+                    for entry in history:
+                        timestamp = entry.get("timestamp", "")
+                        sender = entry.get("sender", "attacker")
+                        text = entry.get("text", "")
+                        
+                        if sender == "attacker":
+                            prefix = "POST /login.php - payload:" if "POST" in text else "root@ubuntu:~#"
+                            terminal_html += f'<span style="color:#8b949e;">[{timestamp}]</span> <span class="terminal-cmd">{prefix} {text}</span><br>'
+                        else:
+                            terminal_html += f'<div class="terminal-resp">{text}</div>'
+                    terminal_html += '</div>'
+                    st.markdown(terminal_html, unsafe_allow_html=True)
+            else:
+                st.error("Session data unavailable.")
+        else:
+            st.info("Select a honeypot session from the left column to analyze it.")
+            
+    # Deception refresh
+    st.write("")
+    if st.button("🔄 Refresh Deception Logs", key="btn_refresh_deception"):
+        st.rerun()
